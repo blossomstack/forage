@@ -1,7 +1,25 @@
 import http.server
+import sys
 import threading
 
 import pytest
+
+
+def import_app():
+    """Import `forage.app` fresh, honouring the current environment.
+
+    Two reasons this cannot be a plain module-level import. The MCP server is
+    built at import time, so the tool set is fixed by the environment as it was
+    then. And the MCP session manager may only be run once per instance — a
+    second TestClient over the same app object raises rather than starting — so
+    each test needs its own.
+    """
+    for name in [n for n in sys.modules if n == "forage" or n.startswith("forage.")]:
+        del sys.modules[name]
+    from forage.app import app
+
+    return app
+
 
 ARTICLE = b"""<!doctype html><html><head><title>Test Article</title>
 <meta name="author" content="A Person"></head><body>

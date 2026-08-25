@@ -72,6 +72,36 @@ jobs:
             'http://localhost:8080/extract?url=http://169.254.169.254/')
           test "$code" = "403"
 
+      - name: MCP handshake and tool call over the mounted transport
+        run: |
+          pip install "mcp>=2.0"
+          python - <<'EOF'
+          import asyncio
+          from mcp.client.session import ClientSession
+          from mcp.client.streamable_http import streamable_http_client
+
+          async def main():
+              async with streamable_http_client("http://localhost:8080/mcp/") as st:
+                  async with ClientSession(st[0], st[1]) as s:
+                      init = await s.initialize()
+                      assert init.server_info.name == "forage", init.server_info
+                      names = {t.name for t in (await s.list_tools()).tools}
+                      # `search` must be absent: no FORAGE_SEARCH_URL is set here,
+                      # and a tool that can only fail is worse than no tool.
+                      assert names == {"fetch"}, names
+                      ok = await s.call_tool("fetch", {"url": "https://example.com/"})
+                      assert not ok.is_error, ok
+                      assert "this domain is for use" in ok.content[0].text.lower()
+                      bad = await s.call_tool("fetch", {"url": "http://169.254.169.254/"})
+                      assert bad.is_error
+                      # The reason has to survive: a masked crash message would
+                      # leave a model unable to tell this from a transient failure.
+                      assert "non-public address" in bad.content[0].text, bad.content[0].text
+                      print("mcp ok:", names)
+
+          asyncio.run(main())
+          EOF
+
       - name: Container reports healthy
         run: |
           for _ in $(seq 1 30); do

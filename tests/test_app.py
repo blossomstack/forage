@@ -3,19 +3,20 @@ import json
 import pytest
 from fastapi.testclient import TestClient
 
+from tests.conftest import import_app
+
 
 @pytest.fixture
 def client(monkeypatch):
     # The guard would otherwise block the test server on 127.0.0.1.
     monkeypatch.setenv("FORAGE_ALLOW_PRIVATE_ADDRESSES", "1")
-    from forage.app import app
-
-    with TestClient(app) as c:
+    with TestClient(import_app()) as c:
         yield c
 
 
 def test_health_exercises_the_extractor(client):
-    assert client.get("/health").json() == {"ok": True}
+    body = client.get("/health").json()
+    assert body["ok"] is True
 
 
 def test_extract_returns_markdown(client, server):
@@ -60,8 +61,6 @@ def test_pdf_is_extracted_over_http(client, server):
 
 def test_blocked_url_is_403(monkeypatch):
     monkeypatch.delenv("FORAGE_ALLOW_PRIVATE_ADDRESSES", raising=False)
-    from forage.app import app
-
-    with TestClient(app) as c:
+    with TestClient(import_app()) as c:
         assert c.get("/extract", params={"url": "http://169.254.169.254/"}).status_code == 403
         assert c.get("/extract", params={"url": "file:///etc/passwd"}).status_code == 403

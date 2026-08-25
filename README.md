@@ -8,6 +8,8 @@ docker run -p 8080:8080 ghcr.io/blossomstack/forage:latest
 curl 'http://localhost:8080/extract?url=https://en.wikipedia.org/wiki/Foraging'
 ```
 
+REST for scripts, [MCP](#mcp) at `/mcp/` for agents.
+
 ```
 image: ~230 MB      memory: ~130 MB      typical page: 0.2–0.9s
 ```
@@ -71,6 +73,50 @@ Runs a real extraction and fails if no content comes out. A liveness check that
 only proves the process is alive would stay green with a broken extractor
 install, which is the failure mode this service actually has.
 
+## MCP
+
+The same two capabilities are also served over MCP (Streamable HTTP) at **`/mcp/`** —
+mind the trailing slash; `/mcp` answers with a 307 to it.
+
+```json
+{ "mcpServers": { "forage": { "type": "http", "url": "http://localhost:8080/mcp/" } } }
+```
+
+| Tool | |
+|---|---|
+| `fetch(url, links=true)` | The page as Markdown |
+| `search(query, limit=8)` | Ranked results — **only registered when `FORAGE_SEARCH_URL` is set** |
+
+Two tools rather than one combined "search and read the top N". Eager fetching turns one
+query into N page loads, and the ~150-character snippet is usually enough for the model to
+pick the two results worth reading.
+
+`search` proxies to a [SearXNG](https://docs.searxng.org) instance. Note that instance needs
+`search.formats` to include `json`, or it answers `format=json` with a hard 403.
+
+Tool failures carry their reason — "no readable content … it may need JavaScript to render"
+is a different instruction to a model than "returned HTTP 404". This requires raising the
+SDK's `ToolError`: any other exception is treated as a crash and the message is replaced
+with a bare `Error executing tool fetch`, which tells a model nothing.
+
+### Behind a reverse proxy
+
+The MCP SDK enables DNS-rebinding protection by default and answers **421** for any `Host`
+it does not recognise — which is every deployment behind a proxy, and it reads like a broken
+route rather than a setting. List the proxy's hostname:
+
+```
+FORAGE_MCP_ALLOWED_HOSTS=forage.example.com,forage.example.com:443
+```
+
+`*` disables the check entirely. Prefer the allowlist: forage has no authentication, so
+network placement is the only other control.
+
+The default list covers `localhost` and `127.0.0.1`, with and without `:8080`. **Publishing
+the container on a different host port breaks MCP** — `-p 9000:8080` makes the `Host` header
+`localhost:9000`, which is not on that list, and every MCP call returns 421 while the REST
+routes keep working perfectly. Add the port you publish on.
+
 ## Configuration
 
 Everything has a working default; none of these are required.
@@ -84,6 +130,8 @@ Everything has a working default; none of these are required.
 | `FORAGE_MAX_REDIRECTS` | `5` | |
 | `FORAGE_ALLOW_PRIVATE_ADDRESSES` | `false` | See below |
 | `FORAGE_USER_AGENT` | a Chrome UA | |
+| `FORAGE_SEARCH_URL` | unset | SearXNG base URL; enables the MCP `search` tool |
+| `FORAGE_MCP_ALLOWED_HOSTS` | unset | Extra `Host` values the MCP transport accepts |
 
 ## The SSRF guard
 
