@@ -11,7 +11,9 @@ from fastapi.responses import JSONResponse, PlainTextResponse
 
 from .config import Settings
 from .extract import Unextractable, extract
+from .mcp_server import build_server, transport_security
 from .net import BlockedURL, Fetched, TooLarge, fetch
+from .search import search_url
 
 SAMPLE = b"<html><body><article><p>forage is running.</p></article></body></html>"
 
@@ -25,15 +27,38 @@ async def lifespan(app: FastAPI):
         headers={"User-Agent": settings.user_agent, "Accept-Encoding": "gzip, deflate"},
     )
     try:
-        yield
+        # Mounting a Starlette sub-app does NOT run its lifespan, and the MCP
+        # session manager needs one: without this the /mcp routes exist and
+        # every request fails inside the transport. It has to be entered here,
+        # in the parent's lifespan.
+        async with mcp_server.session_manager.run():
+            yield
     finally:
         app.state.client.close()
 
+
+def _client() -> httpx.Client:
+    return app.state.client
+
+
+mcp_server = build_server(_client, Settings.from_env())
 
 app = FastAPI(
     title="forage",
     summary="Fetch a URL, get clean Markdown.",
     lifespan=lifespan,
+)
+
+# streamable_http_path="/" because this app is mounted at /mcp; leaving the
+# default would put the endpoint at /mcp/mcp. The served URL is therefore
+# "/mcp/" — Starlette redirects "/mcp" to it with a 307, which preserves the
+# POST method and body, but prefer the trailing slash in client config.
+app.mount(
+    "/mcp",
+    mcp_server.streamable_http_app(
+        streamable_http_path="/",
+        transport_security=transport_security(),
+    ),
 )
 
 
@@ -112,4 +137,7 @@ def health():
     result = extract(SAMPLE, content_type="text/html", url="https://example.invalid/")
     if "forage is running" not in result.markdown:
         raise HTTPException(status_code=503, detail="extractor produced no content")
-    return {"ok": True}
+    # `search` reports whether the optional SearXNG backend is wired up. The MCP
+    # tool is only registered when it is, so this is the one place to see that a
+    # deployment meant to have search does not.
+    return {"ok": True, "search": search_url() is not None}
