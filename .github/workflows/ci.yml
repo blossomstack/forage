@@ -59,7 +59,12 @@ jobs:
           # dependency that imports fine but cannot parse anything.
           body=$(curl -sf 'http://localhost:8080/extract?url=https://example.com/')
           echo "$body"
-          echo "$body" | grep -qi "illustrative examples"
+          # Assert on the sentence example.com has kept through rewrites, plus a
+          # length floor. An assertion on the exact wording is a test of someone
+          # else's copy: the first version of this step pinned "illustrative
+          # examples" and broke when they reworded the page.
+          echo "$body" | grep -qi "this domain is for use"
+          test "${#body}" -ge 50
 
       - name: The SSRF guard is on by default in the image
         run: |
